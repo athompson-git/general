@@ -57,9 +57,47 @@ void PTRatioAnalyzer(const char *file_name, const char *save_name, const char *p
     MissingET *met;
 
     // Declare running indices.
-    Int_t muon_n = branch_mu->GetEntries();
-    Int_t jet_n = branch_jet->GetEntries();
-    Int_t met_n = branch_met->GetEntries();
+    Int_t jet_size = branch_jet->GetEntries();
+    Int_t met_size = branch_met->GetEntries();
+    
+    // Skip events if they do not have 4 or more jets.
+    // Skip events if they do not have a BTag jet.
+    // Skip events if they do not have a Tau+ and Tau-.
+    
+    // Declare kinematic variables.
+    TLorentzVector leading_jet;
+    TLorentzVector subleading_jet;
+    TLorentzVector tau_plus;
+    TLorentzVector tau_minus;
+    
+    // Top mass bound and HT - LT loop.
+    // Loop over jets and find the highest pt BTag, the second highest pt, non-TauTag jet,
+    // and two opposite sign TauTag jets.
+    for (Int_t ii = 0; ii < jet_size; ii++) {
+      if (jet->BTag == 1 && jet->PT > leading_jet->PT()) {
+        leading_jet_pt = jet->PT;
+        
+      }
+      if (jet->TauTag) {
+        if (jet->Charge = 1) {
+        }
+        if (jet->Charge = -1) {
+        }
+      }
+    }
+    
+    // Loop to find the second leading jet, BTag or not.
+    for (Int_t ii = 0; ii < jet_size; ii++) {
+      if (jet->TauTag != 1) {
+        // check if pt is higher -> save it.
+      }
+    }
+    
+    // Determine tau-jet pair mass.
+    
+    // Normalized Missing ET loop.
+    
+    
 
   }
 
