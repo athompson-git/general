@@ -82,7 +82,7 @@ void PTRatioAnalyzer(const char *file_name, const char *save_name, const char *p
         btag_jet->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
         leading_btag_id = ii;
       }
-      // Find the leading OS tau pair.
+      // Find the leading OS Tau pair.
       if (jet->TauTag == 1) {
         if (jet->Charge == 1 && jet->PT > tau_plus->PT()) {
           tau_plus->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
@@ -100,10 +100,24 @@ void PTRatioAnalyzer(const char *file_name, const char *save_name, const char *p
         second_jet->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
       }
     }
-    
+
     // Determine tau-jet pair mass.
+    Double_t choice_pair_mass;
+    // p = +, m = -
+    // b = btag jet, j = other leading jet (btag or non-btag)
+    TLorentzVector tau_p_b = tau_plus + btag_jet;
+    TLorentzVector tau_m_j = tau_minus + second_jet;
+    TLorentzVector tau_p_j = tau_plus + second_jet;
+    TLorentzVector tau_m_b = tau_minus + btag_jet;
+
+    if (abs(tau_p_b->M() - tau_m_j->M()) < abs(tau_p_j->M() - tau_m_b->M())) {
+      choice_pair_mass = std::max(tau_p_b->M(), tau_m_j->M());
+    } else {
+      choice_pair_mass = std::max(tau_p_j->M(), tau_m_b->M());
+    }
     
     // Normalized Missing ET loop.
+    
     
     // Calculate HT - LT.
     
