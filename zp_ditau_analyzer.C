@@ -25,7 +25,6 @@ void PTRatioAnalyzer(const char *file_name, const char *save_name, const char *p
   Long64_t number_of_entries = tree_reader->GetEntries();
 
   // Get pointers to branches used in this analysis.
-  TClonesArray *branch_mu = tree_reader->UseBranch("Muon");
   TClonesArray *branch_jet = tree_reader->UseBranch("Jet");
   TClonesArray *branch_met = tree_reader->UseBranch("MissingET");
 
@@ -61,35 +60,44 @@ void PTRatioAnalyzer(const char *file_name, const char *save_name, const char *p
     Int_t met_size = branch_met->GetEntries();
     
     // Skip events if they do not have 4 or more jets.
+    if (jet_size < 4) continue;
+   
     // Skip events if they do not have a BTag jet.
     // Skip events if they do not have a Tau+ and Tau-.
     
-    // Declare kinematic variables.
-    TLorentzVector leading_jet;
-    TLorentzVector subleading_jet;
-    TLorentzVector tau_plus;
-    TLorentzVector tau_minus;
+    // Declare 4-vectors.
+    TLorentzVector *btag_jet;
+    TLorentzVector *second_jet;
+    TLorentzVector *tau_plus;
+    TLorentzVector *tau_minus;
     
+    Int_t leading_btag_id = -1;
     // Top mass bound and HT - LT loop.
     // Loop over jets and find the highest pt BTag, the second highest pt, non-TauTag jet,
     // and two opposite sign TauTag jets.
     for (Int_t ii = 0; ii < jet_size; ii++) {
-      if (jet->BTag == 1 && jet->PT > leading_jet->PT()) {
-        leading_jet_pt = jet->PT;
-        
+      jet = (Jet*) branch_jet->At(ii);
+      // Find the leading b-tagged jet.
+      if (jet->BTag == 1 && jet->PT > btag_jet->PT()) {
+        btag_jet->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
+        leading_btag_id = ii;
       }
-      if (jet->TauTag) {
-        if (jet->Charge = 1) {
+      // Find the leading OS tau pair.
+      if (jet->TauTag == 1) {
+        if (jet->Charge == 1 && jet->PT > tau_plus->PT()) {
+          tau_plus->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
         }
-        if (jet->Charge = -1) {
+        if (jet->Charge == -1 && jet->PT > tau_minus->PT()) {
+          tau_minus->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
         }
       }
     }
     
-    // Loop to find the second leading jet, BTag or not.
+    // Loop to find the other highest-pt jet with ID different than the leading BTag. 
     for (Int_t ii = 0; ii < jet_size; ii++) {
-      if (jet->TauTag != 1) {
-        // check if pt is higher -> save it.
+      jet = (Jet*) branch_jet->At(ii);
+      if (jet->TauTag == 0 && jet->PT > second_jet->PT() && ii != leading_btag_id) {
+        second_jet->SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->M);
       }
     }
     
@@ -97,11 +105,13 @@ void PTRatioAnalyzer(const char *file_name, const char *save_name, const char *p
     
     // Normalized Missing ET loop.
     
+    // Calculate HT - LT.
+    
     
 
   }
 
-  // Draw hist and save.
+  // Draw histograms and save them in a .root format.
   TCanvas *c = new TCanvas();
 
   hist_lj_mass->Scale(1/hist_lj_mass->Integral());
