@@ -1,7 +1,7 @@
 // An analyzer to produce key selection criteria plots for Z' -> ditau processes.
 // USAGE:
 // gSystem->Load("<path_to_delphes>/Delphes/libDelphes.so");
-// .x ditau_analyzer.C("input_file.root", "saved_histogram_name.root", nbins);
+// .x DiTauAnalyzer.C("input_file.root", "saved_histogram_name.root", nbins);
 
 #ifdef __CLING__
 //R__LOAD_LIBRARY(libDelphes)
@@ -13,7 +13,7 @@ class ExRootTreeReader;
 class ExRootResult;
 #endif
 
-void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
+void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   gSystem->Load("libDelphes.so");
 
   // Create a chain of root trees.
@@ -29,27 +29,56 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
   TClonesArray *branch_met = tree_reader->UseBranch("MissingET");
 
   // Book histograms.
-  TH1F *hist_pair_mass = new TH1F("pair_mass", "Max{M(j,tau)}", nbins, 0., 300.);
+  TH1F *hist_pair_mass = new TH1F("pair_mass", "Max{M(tau,j)}", nbins, 0., 300.);
   hist_pair_mass->GetXaxis()->SetTitle("M(tau,j)");
   hist_pair_mass->GetYaxis()->SetTitle("a.u.");
 
   TH1F *hist_MET = new TH1F("met", "Normalized Missing ET", nbins, 0., 1.);
-  hist_MET->GetXaxis()->SetTitle("MET/M(tautau)");
+  hist_MET->GetXaxis()->SetTitle("MET/M(tau+,tau-)");
   hist_MET->GetYaxis()->SetTitle("a.u.");
 
   TH1F *hist_HT_LT = new TH1F("HT_LT", "HT - LT", nbins, -500., 500.);
   hist_HT_LT->GetXaxis()->SetTitle("HT - LT");
   hist_HT_LT->GetYaxis()->SetTitle("a.u.");
 
-  TH1F *hist_eta = new TH1F("eta", "BTag Eta", nbins, -6., 6.);
-  hist_eta->GetXaxis()->SetTitle("Eta");
-  hist_eta->GetYaxis()->SetTitle("a.u.");
+  TH1F *hist_ditau_mass = new TH1F("ditau_mass", "M(tau+,tau-)", nbins, 0., 300.);
+  hist_ditau_mass->GetXaxis()->SetTitle("M(tau+, tau-)");
+  hist_ditau_mass->GetYaxis()->SetTitle("a.u.");
 
-  TH1F *hist_pt = new TH1F("pt", "BTag Pt", nbins, 0., 300.);
-  hist_pt->GetXaxis()->SetTitle("Pt (GeV)");
-  hist_pt->GetYaxis()->SetTitle("a.u.");
+  // Eta and Pt.
+  TH1F *hist_eta_btag = new TH1F("eta_btag", "BTag Eta", nbins, -6., 6.);
+  hist_eta_btag->GetXaxis()->SetTitle("Eta");
+  hist_eta_btag->GetYaxis()->SetTitle("a.u.");
 
-  // Event loop.
+  TH1F *hist_eta_jet = new TH1F("eta_btag", "Secondary Jet Eta", nbins, -6., 6.);
+  hist_eta_jet->GetXaxis()->SetTitle("Eta");
+  hist_eta_jet->GetYaxis()->SetTitle("a.u.");
+
+  TH1F *hist_eta_tau_p = new TH1F("eta_btag", "Tau+ Eta", nbins, -6., 6.);
+  hist_eta_tau_p->GetXaxis()->SetTitle("Eta");
+  hist_eta_tau_p->GetYaxis()->SetTitle("a.u.");
+
+  TH1F *hist_eta_tau_m = new TH1F("eta_btag", "Tau- Eta", nbins, -6., 6.);
+  hist_eta_tau_m->GetXaxis()->SetTitle("Eta");
+  hist_eta_tau_m->GetYaxis()->SetTitle("a.u.");
+
+  TH1F *hist_pt_btag = new TH1F("pt_btag", "BTag Pt", nbins, 0., 300.);
+  hist_pt_btag->GetXaxis()->SetTitle("Pt (GeV)");
+  hist_pt_btag->GetYaxis()->SetTitle("a.u.");
+
+  TH1F *hist_pt_jet = new TH1F("pt_btag", "Secondary Jet Pt", nbins, 0., 300.);
+  hist_pt_jet->GetXaxis()->SetTitle("Pt (GeV)");
+  hist_pt_jet->GetYaxis()->SetTitle("a.u.");
+
+  TH1F *hist_pt_tau_p = new TH1F("pt_tau_p", "Tau+ Pt", nbins, 0., 300.);
+  hist_pt_tau_p->GetXaxis()->SetTitle("Pt (GeV)");
+  hist_pt_tau_p->GetYaxis()->SetTitle("a.u.");
+
+  TH1F *hist_pt_tau_m = new TH1F("pt_tau_m", "Tau- Pt", nbins, 0., 300.);
+  hist_pt_tau_m->GetXaxis()->SetTitle("Pt (GeV)");
+  hist_pt_tau_m->GetYaxis()->SetTitle("a.u.");
+
+  // Main event loop.
   for(Int_t entry = 0; entry < number_of_entries; ++entry) {
 
     tree_reader->ReadEntry(entry);
@@ -65,7 +94,7 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
 
     // Skip events if they do not have 4 or more jets.
     if (jet_size < 4) {
-      printf("Event #%d: did not find at least 4 jets, skipping... \n", entry);
+      printf("Event # %d: did not find at least 4 jets, skipping... \n", entry);
       continue;
     }
 
@@ -122,7 +151,7 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
       continue;
     }
 
-    // Now that we have ID'd our 4 particles, construct more 4-vectors.
+    // Now that we have ID'd our 4 particles, calculate kinematics.
     // p = +, m = -
     // b = btag jet, j = other leading jet (btag or non-btag)
     TLorentzVector tau_p_b = tau_plus + btag_jet;
@@ -130,8 +159,6 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
     TLorentzVector tau_p_j = tau_plus + second_jet;
     TLorentzVector tau_m_b = tau_minus + btag_jet;
     TLorentzVector ditau = tau_plus + tau_minus;
-
-    // Fill histograms.
 
     // Calculate and fill tau-jet pair mass.
     Double_t choice_pair_mass;
@@ -155,11 +182,20 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
     Double_t L_T = abs(tau_plus.Pt()) + abs(tau_minus.Pt());
     hist_HT_LT->Fill(H_T - L_T);
 
-    // Fill eta spectrum for BTag.
-    hist_eta->Fill(btag_jet.Eta());
+    // Fill ditau pair mass.
+    hist_ditau_mass->Fill(ditau.M());
 
-    // Fill Pt spectrum for the BTag
-    hist_pt->Fill(btag_jet.Pt());
+    // Fill eta spectrums.
+    hist_eta_btag->Fill(btag_jet.Eta());
+    hist_eta_jet->Fill(second_jet.Eta());
+    hist_eta_tau_p->Fill(tau_plus.Eta());
+    hist_eta_tau_m->Fill(tau_minus.Eta());
+
+    // Fill Pt spectrums.
+    hist_pt_btag->Fill(btag_jet.Pt());
+    hist_pt_jet->Fill(second_jet.Pt());
+    hist_pt_tau_p->Fill(tau_plus.Pt());
+    hist_pt_tau_m->Fill(tau_minus.Pt());
 
   } // End event loop.
 
@@ -177,20 +213,58 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
   hist_HT_LT->Draw("HIST");
 
   TCanvas *c4 = new TCanvas();
-  hist_eta->Scale(1/hist_eta->Integral());
-  hist_eta->Draw("HIST");
+  hist_ditau_mass->Scale(1/hist_ditau_mass->Integral());
+  hist_ditau_mass->Draw("HIST");
 
   TCanvas *c5 = new TCanvas();
-  hist_pt->Scale(1/hist_eta->Integral());
-  hist_pt->Draw("HIST");
+  hist_eta_btag->Scale(1/hist_eta_btag->Integral());
+  hist_eta_btag->Draw("HIST");
 
-  std::string mass_name = string(sample_desc) + "_pair_mass";
+  TCanvas *c6 = new TCanvas();
+  hist_eta_jet->Scale(1/hist_eta_jet->Integral());
+  hist_eta_jet->Draw("HIST");
+
+  TCanvas *c7 = new TCanvas();
+  hist_eta_tau_p->Scale(1/hist_eta_tau_p->Integral());
+  hist_eta_tau_p->Draw("HIST");
+
+  TCanvas *c8 = new TCanvas();
+  hist_eta_tau_m->Scale(1/hist_eta_tau_m->Integral());
+  hist_eta_tau_m->Draw("HIST");
+
+  TCanvas *c9 = new TCanvas();
+  hist_pt_btag->Scale(1/hist_pt_btag->Integral());
+  hist_pt_btag->Draw("HIST");
+
+  TCanvas *c10 = new TCanvas();
+  hist_pt_jet->Scale(1/hist_pt_jet->Integral());
+  hist_pt_jet->Draw("HIST");
+
+  TCanvas *c11 = new TCanvas();
+  hist_pt_tau_p->Scale(1/hist_pt_tau_p->Integral());
+  hist_pt_tau_p->Draw("HIST");
+
+  TCanvas *c12 = new TCanvas();
+  hist_pt_tau_m->Scale(1/hist_pt_tau_m->Integral());
+  hist_pt_tau_m->Draw("HIST");
+
+  std::string mass_name = string(sample_desc) + "_taujet_mass";
   std::string met_name = string(sample_desc) + "_met";
   std::string HT_LT_name = string(sample_desc) + "_HT_LT";
-  std::string eta_name = string(sample_desc) + "_eta";
-  std::string pt_name = string(sample_desc) + "_pt";
+  std::string ditau_mass_name = string(sample_desc) + "_ditau_mass";
 
-  TFile *f1 = new TFile("pair_mass.root", "UPDATE");
+  std::string eta_btag_name = string(sample_desc) + "_eta_btag";
+  std::string eta_jet_name = string(sample_desc) + "_eta_jet";
+  std::string eta_taup_name = string(sample_desc) + "_eta_taup";
+  std::string eta_taum_name = string(sample_desc) + "_eta_taum";
+
+  std::string pt_btag_name = string(sample_desc) + "_pt_btag";
+  std::string pt_jet_name = string(sample_desc) + "_pt_jet";
+  std::string pt_taup_name = string(sample_desc) + "_pt_taup";
+  std::string pt_taum_name = string(sample_desc) + "_pt_taum";
+
+
+  TFile *f1 = new TFile("hist_taujet_mass.root", "UPDATE");
   hist_pair_mass->Write(mass_name.c_str(), TObject::kOverwrite);
 
   TFile *f2 = new TFile("hist_MET.root", "UPDATE");
@@ -199,10 +273,31 @@ void ditau_analyzer(const char *file_name, const char *sample_desc, int nbins) {
   TFile *f3 = new TFile("hist_HT_LT.root", "UPDATE");
   hist_HT_LT->Write(HT_LT_name.c_str(), TObject::kOverwrite);
 
-  TFile *f4 = new TFile("hist_eta.root" ,"UPDATE");
-  hist_eta->Write(eta_name.c_str(), TObject::kOverwrite);
+  TFile *f4 = new TFile("hist_ditau_mass.root", "UPDATE");
+  hist_ditau_mass->Write(ditau_mass_name.c_str(), TObject::kOverwrite);
 
-  TFile *f5 = new TFile("hist_pt.root", "UPDATE");
-  hist_pt->Write(pt_name.c_str(), TObject::kOverwrite);
+  TFile *f5 = new TFile("hist_eta_btag.root" ,"UPDATE");
+  hist_eta_btag->Write(eta_btag_name.c_str(), TObject::kOverwrite);
+
+  TFile *f6 = new TFile("hist_eta_jet.root" ,"UPDATE");
+  hist_eta_jet->Write(eta_jet_name.c_str(), TObject::kOverwrite);
+
+  TFile *f7 = new TFile("hist_eta_taup.root" ,"UPDATE");
+  hist_eta_tau_p->Write(eta_taup_name.c_str(), TObject::kOverwrite);
+
+  TFile *f8 = new TFile("hist_eta_taum.root" ,"UPDATE");
+  hist_eta_tau_m->Write(eta_taum_name.c_str(), TObject::kOverwrite);
+
+  TFile *f9 = new TFile("hist_pt_btag.root", "UPDATE");
+  hist_pt_btag->Write(pt_btag_name.c_str(), TObject::kOverwrite);
+
+  TFile *f10 = new TFile("hist_pt_jet.root", "UPDATE");
+  hist_pt_jet->Write(pt_jet_name.c_str(), TObject::kOverwrite);
+
+  TFile *f11 = new TFile("hist_pt_taup.root", "UPDATE");
+  hist_pt_tau_p->Write(pt_taup_name.c_str(), TObject::kOverwrite);
+
+  TFile *f12 = new TFile("hist_pt_taum.root", "UPDATE");
+  hist_pt_tau_m->Write(pt_taum_name.c_str(), TObject::kOverwrite);
 
 }
