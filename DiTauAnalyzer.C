@@ -2,7 +2,7 @@
 // arXiv:1707.07016v1
 // USAGE:
 // gSystem->Load("<path_to_delphes>/Delphes/libDelphes.so");
-// .x DiTauAnalyzer.C("input_file.root", "Z' 500 GeV", 20);
+// .x DiTauAnalyzer.C("input_file.root", "Z' 500 GeV", nbins);
 
 #ifdef __CLING__
 #include "classes/DelphesClasses.h"
@@ -29,7 +29,7 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   TClonesArray *branch_met = tree_reader->UseBranch("MissingET");
 
   // Book histograms.
-  TH1F *hist_pair_mass = new TH1F("pair_mass", "Max{M(tau,j)}", nbins, 0., 300.);
+  TH1F *hist_pair_mass = new TH1F("pair_mass", "Max{M(tau,j)}", nbins, 0., 500.);
   hist_pair_mass->GetXaxis()->SetTitle("M(tau,j)");
   hist_pair_mass->GetYaxis()->SetTitle("a.u.");
 
@@ -72,6 +72,8 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   TH1F *hist_dzeta = new TH1F("dzeta", "DZeta, #alpha = 0.50", nbins, -300., 200.);
   hist_dzeta->GetXaxis()->SetTitle("DZeta [GeV]");
   hist_dzeta->GetYaxis()->SetTitle("a.u.");
+
+  Int_t accepted_events = 0;
 
   // Main event loop.
   for(Int_t entry = 0; entry < number_of_entries; ++entry) {
@@ -134,9 +136,14 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
       }
     }
 
-    // Make Pre-selection cuts.
+    // Make selection cuts.
     if (!found_tau_plus || !found_tau_minus) continue;
     if (!found_btag) continue;
+    if (btag_jet.Pt() < 30.) continue;
+    if (second_jet.Pt() < 30.) continue;
+    if (tau_plus.Pt() < 70.) continue;
+    if (tau_minus.Pt() < 70.) continue;
+    accepted_events++;
 
     // Now that we have ID'd our 4 particles, calculate kinematics.
     // p = +, m = -
@@ -161,7 +168,6 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
 
     // Calculate and fill Missing ET normalized to the ditau mass.
     met = (MissingET*) branch_met->At(0);
-    printf("MET is %f \n", met->MET);
     hist_MET->Fill(met->MET / ditau.M());
 
     // Fill ditau + MET transverse mass.
@@ -175,16 +181,17 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
     hist_tmass->Fill(transverse_p4.M());
 
     // Calculate D-Zeta to distinguish W+jets backgrounds.
-    // (these are actually 2-component vectors in the Eta=0 plane)
+    // (these are actually 2-component vectors in the Eta=0 plane,
+    // but using TVector3 for convenience.)
     TVector3 p_vis_tau_plus = transverse_tau_plus.Vect();
     TVector3 p_vis_tau_minus = transverse_tau_minus.Vect();
     TVector3 zeta = (p_vis_tau_minus.Mag() * p_vis_tau_plus
-                     + p_vis_tau_plus.Mag() * p_vis_tau_minus);
-    TVector3 zeta_hat = zeta * (1 / zeta.Mag());
+                     + p_vis_tau_plus.Mag() * p_vis_tau_minus);  // Bisector.
+    TVector3 zeta_hat = zeta * (1 / zeta.Mag());  // Unit bisector.
     Double_t p_vis = p_vis_tau_plus.Dot(zeta_hat) + p_vis_tau_minus.Dot(zeta_hat);
     Double_t p_miss = (met_p4.Vect()).Dot(zeta_hat);
 
-    hist_dzeta->Fill(p_miss - 0.50 * p_vis); // alpha = 0.50 (Tau_hadronic).
+    hist_dzeta->Fill(p_miss - 0.15 * p_vis); // alpha = 0.15
 
     // Calculate and fill HT - LT.
     Double_t H_T = abs(btag_jet.Pt()) + abs(second_jet.Pt());
@@ -204,6 +211,8 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
     hist_pt_ditau->Fill(ditau.Pt());
 
   } // End event loop.
+
+  printf("Out of 40k events %d were accepted. \n", accepted_events);
 
   // Draw histograms and save them in a .root format.
   TCanvas *c1 = new TCanvas();
