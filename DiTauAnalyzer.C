@@ -2,7 +2,7 @@
 // arXiv:1707.07016v1
 // USAGE:
 // gSystem->Load("<path_to_delphes>/Delphes/libDelphes.so");
-// .x DiTauAnalyzer.C("input_file.root", "Z' 500 GeV", nbins);
+// .x DiTauAnalyzer.C("input_file.root", "Z' 500 GeV", <bin count>);
 
 #ifdef __CLING__
 #include "classes/DelphesClasses.h"
