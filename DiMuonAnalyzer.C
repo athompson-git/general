@@ -128,11 +128,10 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
     // Place preselection cuts.
     if (!found_btag) continue;
     if (!found_mu_plus || !found_mu_minus) continue;
-    if (mu_plus.Pt() < 30.) continue;
-    if (mu_minus.Pt() < 30.) continue;
-    if (btag_jet.Pt() == 0.) continue;
-    if (second_jet.Pt() == 0.) continue;
+    if (btag_jet.Pt() < 30.) continue;
+    if (second_jet.Pt() < 30.) continue;
     if (abs(mu_plus.Eta()) > 2.4 || abs(mu_minus.Eta()) > 2.4) continue;
+    if (abs(btag_jet.Eta()) > 2.4 || abs(second_jet.Eta()) > 2.4) continue;
 
     // Now that we have ID'd our 4 particles, construct more 4-vectors.
     // p = +, m = -
@@ -240,7 +239,7 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
 //    if (unboosted_MT2 > 10.0) continue;
 //    if (H_T - L_T > 0) continue;
 //    if (normalized_met > 0.2) continue;
-    if (choice_pair_mass < 170) continue;
+//    if (choice_pair_mass < 170) continue;
 
     accepted_events++;
 
