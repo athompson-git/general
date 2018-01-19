@@ -16,6 +16,8 @@ class ExRootResult;
 // Define global constants.
 Double_t kMuonMass = 0.105658389;  // GeV
 Double_t previous_mt2 = 999.0;
+Int_t accepted_events = 0;
+Int_t event_count = 0;
 
 void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   gSystem->Load("libDelphes.so");
@@ -46,21 +48,29 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   hist_HT_LT->GetXaxis()->SetTitle("HT - LT");
   hist_HT_LT->GetYaxis()->SetTitle("a.u.");
 
-  TH1F *hist_MT2 = new TH1F("MT2", "MT2", nbins, 0., 100.);
+  TH1F *hist_MT2 = new TH1F("MT2", "MT2", nbins, 0., 1.);
   hist_MT2->GetXaxis()->SetTitle("M_{T2}");
   hist_MT2->GetYaxis()->SetTitle("a.u.");
 
   TH2F *hist_MT2_dPhi = new TH2F("mt2_vs_dPhi", "Max #delta #phi vs. M_{T2}", nbins,
-                                0., 100., nbins, 0., 3.14);
+                                 0., 10., nbins, 0., 3.14);
   hist_MT2_dPhi->GetXaxis()->SetTitle("M_{T2}");
-  hist_MT2_dPhi->GetYaxis()->SetTitle("max[dPhi(mu+, MET), dPhi(mu-, MET)]");
+  hist_MT2_dPhi->GetYaxis()->SetTitle("max[#delta#phi(#mu^{+}+, MET), #delta#phi(#mu^{-}, MET)]");
 
   TH1F *hist_pt_mu = new TH1F("mupt", "", nbins, 0., 300.);
+
+  TH2F *hist_topology = new TH2F("topo", "Zprime(dimuon) Topology", nbins,
+                                 0., 50., nbins, -3.14, 3.14);
+  hist_topology->GetXaxis()->SetTitle("M_{T2}");
+  hist_topology->GetYaxis()->SetTitle("max[#delta#phi] - #delta#phi(#mu^{+}, #mu^{-})");
+
+  TH1F *hist_unboosted_MT2 = new TH1F("unboost_mt2", "", nbins, 0., 40.);
 
   // Event loop.
   for(Int_t entry = 0; entry < number_of_entries; ++entry) {
 
     tree_reader->ReadEntry(entry);
+    event_count++;
 
     // Declare physics objects.
     Muon *muon;
@@ -118,11 +128,11 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
     // Place preselection cuts.
     if (!found_btag) continue;
     if (!found_mu_plus || !found_mu_minus) continue;
-    // Place kinematic cuts.
     if (mu_plus.Pt() < 30.) continue;
     if (mu_minus.Pt() < 30.) continue;
     if (btag_jet.Pt() == 0.) continue;
     if (second_jet.Pt() == 0.) continue;
+    if (abs(mu_plus.Eta()) > 2.4 || abs(mu_minus.Eta()) > 2.4) continue;
 
     // Now that we have ID'd our 4 particles, construct more 4-vectors.
     // p = +, m = -
@@ -149,7 +159,8 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
 
     // Calculate and fill MET for the event.
     met = (MissingET*) branch_met->At(0);
-    hist_MET->Fill(met->MET / dimuon.M());
+    Double_t normalized_met = (met->MET / dimuon.M());
+    hist_MET->Fill(normalized_met);
 
     // Calculate MT2 (http://www.hep.phy.cam.ac.uk/~lester/mt2/).
     met_P4.SetPtEtaPhiE(met->MET, 0, met->Phi, met->MET);
@@ -183,6 +194,29 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
       printf("%f \n", MT2);
     }
 
+    // UNBOOSTED system.
+    // First calculate recoil in the transverse plane.
+    TLorentzVector jet_recoil = btag_jet + second_jet;
+    TLorentzVector unboosted_mu_plus = jet_recoil + mu_plus;
+    TLorentzVector unboosted_mu_minus = jet_recoil + mu_minus;
+    TLorentzVector unboosted_met = jet_recoil + met_P4;
+
+    // Calculate UNBOOSTED MT2.
+    Double_t unboost_pxA = unboosted_mu_plus.Px();
+    Double_t unboost_pyA = unboosted_mu_plus.Py();
+
+    Double_t unboost_pxB = unboosted_mu_minus.Px();
+    Double_t unboost_pyB = unboosted_mu_minus.Py();
+    Double_t unboost_pxMiss = unboosted_met.Px();
+    Double_t unboost_pyMiss = unboosted_met.Py();
+
+    Double_t unboosted_MT2 = asymm_mt2_lester_bisect::get_mT2(
+                             mVisA, unboost_pxA, unboost_pyA,
+                             mVisB, unboost_pxB, unboost_pyB,
+                             unboost_pxMiss, unboost_pyMiss, chiA, chiB,
+                             desiredPrecisionOnMt2);
+    hist_unboosted_MT2->Fill(unboosted_MT2);
+
     // Calculate and fill HT - LT.
     Double_t H_T = abs(btag_jet.Pt()) + abs(second_jet.Pt());
     Double_t L_T = abs(mu_plus.Pt()) + abs(mu_minus.Pt());
@@ -194,7 +228,25 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
 
     hist_MT2_dPhi->Fill(MT2, max_dphi);
 
+    // Calculate max{dPhi(MET, mu)} - dPhi(mu,mu)
+    // positive --> Topo 1
+    // negative --> Topo 2 (trivial zero)
+    Double_t dphi_muons = abs(mu_plus.DeltaPhi(mu_minus));
+    hist_topology->Fill(MT2, max_dphi - dphi_muons);
+
+
+    // Calculate things for acceptance.
+    Double_t MT2uM = (MT2 - unboosted_MT2) / dimuon.M();
+//    if (unboosted_MT2 > 10.0) continue;
+//    if (H_T - L_T > 0) continue;
+//    if (normalized_met > 0.2) continue;
+    if (choice_pair_mass < 170) continue;
+
+    accepted_events++;
+
   } // End event loop.
+
+  printf("Accepted %d / %d events \n", accepted_events, event_count);
 
   // Draw histograms and save them in a .root format.
   TCanvas *c1 = new TCanvas();
@@ -221,6 +273,11 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   hist_pt_mu->Scale(1/hist_pt_mu->Integral());
   hist_pt_mu->Draw("HIST");
 
+  TCanvas *c7 = new TCanvas();
+  hist_topology->Draw("COL2Z");
+
+  hist_unboosted_MT2->Scale(1/hist_unboosted_MT2->Integral());
+
   std::string mass_name = string(sample_desc) + " max(M(#mu,j))";
   std::string met_name = string(sample_desc) + " MET";
   std::string HT_LT_name = string(sample_desc) + " H_{T} - L_{T}";
@@ -241,4 +298,6 @@ void DiMuonAnalyzer(const char *file_name, const char *sample_desc, int nbins) {
   TFile *f5 = new TFile("hist_dimuon_ptmu.root", "UPDATE");
   hist_pt_mu->Write(sample_desc, TObject::kOverwrite);
 
+  TFile *f17 = new TFile("hist_dimuon_unboost_MT2.root", "UPDATE");
+  hist_unboosted_MT2->Write(sample_desc, TObject::kOverwrite);
 }
