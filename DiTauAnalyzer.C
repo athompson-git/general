@@ -7,17 +7,89 @@
 #ifdef __CLING__
 #include "classes/DelphesClasses.h"
 #include "external/ExRootAnalysis/ExRootTreeReader.h"
-#include "external/ExRootAnalysis/ExRootResult.h"
-#include "lester_mt2_bisect.h"
-#include <utility> // std::pair, std::make_pair
-#else
-class ExRootTreeReader;
-class ExRootResult;
 #endif
 
+#include <TROOT.h>
+#include <TFile.h>
+#include <TH1.h>
+#include <TH2.h>
+#include <TSystem.h>
+#include <TChain.h>
+#include <TClonesArray.h>
+#include <TLorentzVector.h>
+#include <TProfile.h>
+#include <TEfficiency.h>
+#include <TCanvas.h>
 
-// Declare global variables.
-Int_t accepted_events = 0;
+#include "lester_mt2_bisect.h"
+#include <vector>
+#include <string>
+#include <utility>
+#include <iostream>
+
+// Set constants.
+double kTauMass = 1.77682; // GeV
+
+// MT2 Calculator.
+double mt2(TLorentzVector vis1, TLorentzVector vis2, TLorentzVector miss) {
+  double mVisA = vis1.M(); //vis1.M(); // Mass of visible object on side A.
+  double pxA = vis1.Px(); // x momentum of visible object on side A.
+  double pyA = vis1.Py(); // y momentum of visible object on side A.
+
+  double mVisB = vis1.M(); //vis2.M(); // Mass of visible object on side B.
+  double pxB = vis2.Px(); // x momentum of visible object on side B.
+  double pyB = vis2.Py(); // y momentum of visible object on side B.
+
+  double pxMiss = miss.Px(); // x component of missing transverse momentum.
+  double pyMiss = miss.Py(); // y component of missing transverse momentum.
+
+  double chiA = 0.0; // Hypothesised mass of invisible on side A.
+  double chiB = 0.0; // Hypothesised mass of invisible on side B.
+
+  double desiredPrecisionOnMt2 = 0.0; // Algo aims for machine precision.
+
+  asymm_mt2_lester_bisect lester;
+  return lester.get_mT2(mVisA, pxA, pyA, mVisB, pxB, pyB,
+                        pxMiss, pyMiss, chiA, chiB,
+                        desiredPrecisionOnMt2);
+}
+
+
+// Helper function to express a vector V in a new basis defined by two vectors (b1, b2).
+TLorentzVector change_basis(TLorentzVector V, TLorentzVector b1,
+                            TLorentzVector b2) {
+  TVector3 normal = (b1.Vect()).Cross(b2.Vect());
+
+  // Define orthonormal basis vectors (e1, e2, e3) in terms of global coords.
+  TVector3 e1 = (1 / (b1.Vect()).Mag()) * (b1.Vect());
+  TVector3 e3 = (1 / normal.Mag()) * normal;
+  TVector3 e2 = e3.Cross(e1);
+
+  // Define local coords.
+  TVector3 w1(1., 0., 0.);
+  TVector3 w2(0., 1., 0.);
+  TVector3 w3(0., 0., 1.);
+
+  TVector3 V_prime = ((V.Vect()).Dot(e1) * w1)
+                   + ((V.Vect()).Dot(e2) * w2)
+                   + ((V.Vect()).Dot(e3) * w3);
+  TLorentzVector W;
+  W.SetPxPyPzE(V_prime.Px(), V_prime.Py(), V_prime.Pz(), V.E());
+  return W;
+}
+
+
+// Helper function to project a vector into the plane defined by two vectors.
+TLorentzVector plane_projection(TLorentzVector a, TLorentzVector plane_vec1,
+                                TLorentzVector plane_vec2) {
+  TVector3 normal = (plane_vec1.Vect()).Cross(plane_vec2.Vect());
+  Double_t scalar_proj_on_normal = (a.Vect()).Dot(normal) / normal.Mag2();
+  TVector3 a_prime = a.Vect() - scalar_proj_on_normal * normal;
+  TLorentzVector P;
+  P.SetPxPyPzE(a_prime.Px(), a_prime.Py(), a_prime.Pz(), a.E());
+  return P;
+}
+
 
 
 void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
@@ -31,6 +103,7 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   // Create object of class ExRootTreeReader.
   ExRootTreeReader *tree_reader = new ExRootTreeReader(&chain);
   Long64_t number_of_entries = tree_reader->GetEntries();
+  Int_t accepted_events = 0;
 
   // Get pointers to branches used in this analysis.
   TClonesArray *branch_jet = tree_reader->UseBranch("Jet");
@@ -40,8 +113,10 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   TH1F *hist_pair_mass = new TH1F("pair_mass", "Max{M(tau,j)}", nbins, 0., 500.);
   TH1F *hist_MET = new TH1F("met", "Normalized Missing ET", nbins, 0., 2.);
   TH1F *hist_MT2 = new TH1F("tmass", "MT2 (Ditau + MET)", nbins, 0., 150.);
-  TH1F *hist_HT_LT = new TH1F("HT_LT", "HT - LT", nbins, -500., 500.);
+  TH1F *hist_HT_LT = new TH1F("HT_LT", "HT - LT", nbins, -1000., 1000.);
   TH1F *hist_ditau_mass = new TH1F("ditau_mass", "M(tau+,tau-)", nbins, 0., 500.);
+  TH1F *hist_unboosted_MT2 = new TH1F("unboost_mt2", "", nbins, 0., 150.);
+  TH1F *hist_primed_htlt = new TH1F("hist_unbhtlt", "", nbins, -1600, 600);
   TH1F *hist_pt_btag = new TH1F("pt_btag", "BTag Pt", nbins, 0., 300.);
   TH1F *hist_pt_jet = new TH1F("pt_jet", "Secondary Jet Pt", nbins, 0., 300.);
   TH1F *hist_pt_tau_p = new TH1F("pt_tau_p", "Tau+ Pt", nbins, 0., 300.);
@@ -52,18 +127,17 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   TH1F *hist_e_tau_p = new TH1F("e_tau_p", "E(#tau^{+}", nbins, 0., 300.);
   TH1F *hist_e_tau_m = new TH1F("e_tau_m", "E(#tau^{-})", nbins, 0., 300.);
   TH1F *hist_e_ratio = new TH1F("e_ratio", "", nbins, 0., 1.);
-  TH1F *hist_unboosted_MT2 = new TH1F("unboost_mt2", "", nbins, 0., 150.);
-  TH1F *hist_denis = new TH1F("hist_denis", "", nbins, -.3, .3);
   TH1F *hist_topology = new TH1F("hist_topo", "", nbins, -3.14, 3.14);
   TH1F *hist_j_topology = new TH1F("hist_unboosted_topo", "", nbins, -3.14, 3.14);
   TH1F *hist_deltaR_jets = new TH1F("hist_deltaR_1", "", nbins, 0., 6.);
-  TH1F *hist_deltaR_taus = new TH1F("hist_deltaR_2", "", nbins, 0., 6.);
+  TH1F *hist_deltaR_taus = new TH1F("hist_deltaR_2", "", nbins, 0., 3.14);
   TH1F *hist_deltaR_tau_jet = new TH1F("hist_deltaR_3", "", nbins, 0., 6.);
   TH1F *hist_deltaR_tau_met = new TH1F("hist_deltaR_4", "", nbins, 0., 6.);
   TH1F *hist_deltaR_topology = new TH1F("hist_deltaR_topology", "", nbins, -6., 6.);
+  TH1F *hist_deltaPhi_tau_met = new TH1F("hist_deltaPhi_1", "", nbins, -6., 6.);
 
   // Book 2D histograms for exploratory analysis.
-  TH2F *hist2d_topology = new TH2F("topo", "WJets(ditau) Topology", nbins,
+  TH2F *hist2d_topology = new TH2F("topo", "Topology", nbins,
                                  0., 50., nbins, -3.14, 3.14);
   hist2d_topology->GetXaxis()->SetTitle("M_{T2}");
   hist2d_topology->GetYaxis()->SetTitle("max[#delta#phi] - #delta#phi(#tau^{+}, #tau^{-})");
@@ -104,226 +178,215 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   hist2d_eta_btag_tau->GetXaxis()->SetTitle("#eta(b)");
   hist2d_eta_btag_tau->GetYaxis()->SetTitle("#eta(#tau)");
 
-
   // Main event loop.
   for(Int_t entry = 0; entry < number_of_entries; ++entry) {
 
+    if (entry % 10000 == 0) printf("On event %d / %lld \n", entry, number_of_entries);
     tree_reader->ReadEntry(entry);
+    vector<int> b_pos;
+    vector<int> tau_pos;
+    int nonb_pos = -1;
+    float nonb_pt = 0.;
+    bool dibottom = false;
+    bool bottom_and_jet = false;
+    bool os_taus = false;
+
+    // If the event contains at least one jet, push back the vector of b's and
+    // record the branch position of the highest-pT non-b jet.
+    // Also push back a vector of Tau's.
+    for (unsigned j = 0; j < branch_jet->GetEntries(); ++j) {
+      Jet *jet = (Jet*) branch_jet->At(j);
+
+      if (jet->PT < 30.) continue;  // Implicitly cut on jets pT < 30 GeV.
+      if (jet->TauTag && jet->PT < 70.) continue;  // For taus, cut pT < 70 GeV.
+
+      if (jet->BTag) {
+        b_pos.push_back(j);
+      } else if (nonb_pt < jet->PT && !(jet->TauTag)) {
+        nonb_pos = j;
+        nonb_pt = jet->PT;
+      } else if (jet->TauTag) {
+        tau_pos.push_back(j);
+      }
+    }
+
+    if (b_pos.size() >= 2) dibottom = true;
+    if (b_pos.size() == 1 && nonb_pt > 0.) bottom_and_jet = true;
+
+    Jet *tau1, *tau2;
+    // If the event contains at least two muons, check if they are OS and
+    // keep them.
+    if (tau_pos.size() > 1) {
+      tau1 = (Jet *) branch_jet->At(tau_pos[0]);
+      tau2 = (Jet *) branch_jet->At(tau_pos[1]);
+
+      if((tau1->Charge) != (tau2->Charge)) os_taus = true;
+    }
+
+    // Make preselection cut.
+    if (!os_taus) continue;
+    if (!(dibottom || bottom_and_jet)) continue;
+    accepted_events++;
+
+    // Make jet assignments.
+    Jet *b1, *b2;
+    if (dibottom) {
+      b1 = (Jet *) branch_jet->At(b_pos[0]);
+      b2 = (Jet *) branch_jet->At(b_pos[1]);
+    } else if (bottom_and_jet) {
+      b1 = (Jet *) branch_jet->At(b_pos[0]);
+      b2 = (Jet *) branch_jet->At(nonb_pos);
+    }
+
+    // End of selection. ////////////////////////////////////////
+
+    bool PassMissingET = false;
+    bool PassHTLT = false;
+    bool PassMuJetMass = false;
+    bool PassUnboostedMT2 = false;
 
     // Declare physics objects.
-    Muon *muon;
-    Jet *jet;
-    MissingET *met;
-    TLorentzVector btag_jet;
-    TLorentzVector second_jet;
-    TLorentzVector tau_plus;
-    TLorentzVector tau_minus;
+    MissingET *MPT = (MissingET *) branch_met->At(0);
+    TLorentzVector tau1_p4 = tau1->P4();
+    TLorentzVector tau2_p4 = tau2->P4();
+    TLorentzVector met_p4 = MPT->P4();
+    TLorentzVector b1_p4 = b1->P4();
+    TLorentzVector b2_p4 = b2->P4();
 
-    // Declare running indices.
-    Int_t jet_size = branch_jet->GetEntries();
-    Int_t met_size = branch_met->GetEntries();
-
-    // Require 2 jets, at least one of them BTagged, and 2 OS Tau's
-    // (which also count as Delphes jets)..
-    if (jet_size < 4) continue;
-    bool found_btag = false;
-    bool found_tau_plus = false;
-    bool found_tau_minus = false;
-
-    Int_t leading_btag_id = -1;
-    // Loop over jets and find the highest pt BTag, the second highest pt, non-TauTag jet,
-    // and two opposite sign TauTag jets.
-    for (Int_t ii = 0; ii < jet_size; ii++) {
-      jet = (Jet*) branch_jet->At(ii);
-      // Find the leading b-tagged jet.
-      if (jet->BTag == 1 && jet->PT > btag_jet.Pt()) {
-        btag_jet.SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->Mass);
-        leading_btag_id = ii;
-        found_btag = true;
-      }
-      // Find the leading OS Tau pair.
-      if (jet->TauTag == 1) {
-        if (jet->Charge == 1 && jet->PT > tau_plus.Pt()) {
-          tau_plus.SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->Mass);
-          found_tau_plus = true;
-        }
-        if (jet->Charge == -1 && jet->PT > tau_minus.Pt()) {
-          tau_minus.SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->Mass);
-          found_tau_minus = true;
-        }
-      }
-    }
-
-    // Loop to find the other highest-pt jet with ID different than the leading BTag.
-    for (Int_t ii = 0; ii < jet_size; ii++) {
-      jet = (Jet*) branch_jet->At(ii);
-      if (jet->TauTag == 0 && jet->PT > second_jet.Pt() && ii != leading_btag_id) {
-        second_jet.SetPtEtaPhiM(jet->PT, jet->Eta, jet->Phi, jet->Mass);
-      }
-    }
-
-    // Make preselection cuts.
-    if (!found_tau_plus || !found_tau_minus) continue;
-    if (!found_btag) continue;
-    if (btag_jet.Pt() < 30.) continue;
-    if (second_jet.Pt() < 30.) continue;
-    if (tau_plus.Pt() < 70.) continue;
-    if (tau_minus.Pt() < 70.) continue;
-    if (abs(btag_jet.Eta()) > 2.4 || abs(second_jet.Eta()) > 2.4) continue;
-
-    accepted_events++;
 
     // Now that we have ID'd our 4 particles, calculate kinematics.
     // p = +, m = -
     // b = btag jet, j = other leading jet (btag or non-btag)
-    TLorentzVector tau_p_b = tau_plus + btag_jet;
-    TLorentzVector tau_m_j = tau_minus + second_jet;
-    TLorentzVector tau_p_j = tau_plus + second_jet;
-    TLorentzVector tau_m_b = tau_minus + btag_jet;
-    TLorentzVector ditau = tau_plus + tau_minus;
-    TLorentzVector dijet = btag_jet + second_jet;
-    TLorentzVector met_P4;
+    TLorentzVector pm_11 = tau1_p4 + b1_p4;
+    TLorentzVector pm_22 = tau2_p4 + b2_p4;
+    TLorentzVector pm_12 = tau1_p4 + b2_p4;
+    TLorentzVector pm_21 = tau2_p4 + b1_p4;
+    TLorentzVector ditau = tau1_p4 + tau2_p4;
+    TLorentzVector dijet = b1_p4 + b2_p4;
     std::pair <TLorentzVector, TLorentzVector> b_tau_pair; // Matched pair.
 
+
+    // (1) max{M(tau,j)}
     // Find the right tau-jet pairing by taking the permutation of tau-jet
     // pairs (where jet = b or non-b) with the smallest mass difference, then
     // picking the highest pair mass of that permutation.
     Double_t choice_pair_mass;
-    if (abs(tau_p_b.M() - tau_m_j.M()) < abs(tau_p_j.M() - tau_m_b.M())) {
-      b_tau_pair = std::make_pair(btag_jet, tau_plus);
-      choice_pair_mass = std::max(tau_p_b.M(), tau_m_j.M());
+    if (abs(pm_11.M() - pm_22.M()) < abs(pm_12.M() - pm_21.M())) {
+      b_tau_pair = std::make_pair(b1_p4, tau1_p4);
+      choice_pair_mass = std::max(pm_11.M(), pm_22.M());
     } else {
-      b_tau_pair = std::make_pair(btag_jet, tau_minus);
-      choice_pair_mass = std::max(tau_p_j.M(), tau_m_b.M());
+      b_tau_pair = std::make_pair(b1_p4, tau2_p4);
+      choice_pair_mass = std::max(pm_12.M(), pm_21.M());
     }
     hist_pair_mass->Fill(choice_pair_mass);
 
-    // Calculate deltaR(j,j), deltaR(tau,tau), deltaR(j,tau)_matched, deltaR(tau,MET)
-    Double_t deltaR_jets = btag_jet.DeltaR(second_jet);
-    Double_t deltaR_taus = tau_plus.DeltaR(tau_minus);
-    Double_t deltaR_tau_jet = b_tau_pair.first.DeltaR(b_tau_pair.second);
-    Double_t deltaR_tau_met = ditau.DeltaR(met_P4);
-    Double_t deltaR_tau_met_max = std::max(tau_plus.DeltaR(met_P4), tau_minus.DeltaR(met_P4));
-    Double_t deltaR_topology = deltaR_tau_met_max - deltaR_taus;
-    hist_deltaR_jets->Fill(deltaR_jets);
-    hist_deltaR_taus->Fill(deltaR_taus);
-    hist_deltaR_tau_jet->Fill(deltaR_tau_jet);
-    hist_deltaR_tau_met->Fill(deltaR_tau_met);
-    hist_deltaR_topology->Fill(deltaR_topology);
+    // (2) MET / M(tau,tau)
+    hist_MET->Fill(MPT->MET / ditau.M());
+
+    // (3) HT - LT
+    Double_t H_T = b1_p4.Pt() + b2_p4.Pt();
+    Double_t L_T = tau1_p4.Pt() + tau2_p4.Pt();
+    hist_HT_LT->Fill(H_T - L_T);
 
     //////////// Begin MT2 related calculations.
 
-    // Calculate and fill MET for the event.
-    met = (MissingET*) branch_met->At(0);
-    hist_MET->Fill(met->MET / ditau.M());
-
     // Calculate MT2 (http://www.hep.phy.cam.ac.uk/~lester/mt2/).
-    met_P4.SetPtEtaPhiE(met->MET, 0, met->Phi, met->MET);
-    Double_t mVisA = tau_plus.M(); // Mass of visible object on side A.
-    Double_t pxA = tau_plus.Px(); // x momentum of visible object on side A.
-    Double_t pyA = tau_plus.Py(); // y momentum of visible object on side A.
-
-    Double_t mVisB = tau_minus.M(); // Mass of visible object on side B.
-    Double_t pxB = tau_minus.Px(); // x momentum of visible object on side B.
-    Double_t pyB = tau_minus.Py(); // y momentum of visible object on side B.
-
-    Double_t pxMiss = met_P4.Px(); // x component of missing transverse momentum.
-    Double_t pyMiss = met_P4.Py(); // y component of missing transverse momentum.
-
-    Double_t chiA = 0.0; // Hypothesised mass of invisible on side A.
-    Double_t chiB = 0.0; // Hypothesised mass of invisible on side B.
-
-    Double_t desiredPrecisionOnMt2 = 0; // Algo aims for machine precision.
-
-    Double_t MT2 = asymm_mt2_lester_bisect::get_mT2(
-                   mVisA, pxA, pyA,
-                   mVisB, pxB, pyB,
-                   pxMiss, pyMiss,
-                   chiA, chiB,
-                   desiredPrecisionOnMt2);
+    double MT2 = mt2(tau1_p4, tau2_p4, met_p4);
     hist_MT2->Fill(MT2);
 
     // UNBOOSTED system.
-    // First calculate recoil in the transverse plane.
-    TLorentzVector jet_recoil = btag_jet + second_jet;
-    TLorentzVector unboosted_tau_plus = tau_plus + jet_recoil;
-    TLorentzVector unboosted_tau_minus = tau_minus + jet_recoil;
-    TLorentzVector unboosted_met = met_P4 + jet_recoil;
+    TLorentzVector jet_recoil = plane_projection(dijet, tau1_p4, tau2_p4);
+    TLorentzVector proj_met = plane_projection(met_p4, tau1_p4, tau2_p4);
 
-    // Calculate UNBOOSTED MT2.
-    Double_t unboost_pxA = unboosted_tau_plus.Px();
-    Double_t unboost_pyA = unboosted_tau_plus.Py();
-    Double_t unboost_pxB = unboosted_tau_minus.Px();
-    Double_t unboost_pyB = unboosted_tau_minus.Py();
-    Double_t unboost_pxMiss = unboosted_met.Px();
-    Double_t unboost_pyMiss = unboosted_met.Py();
+    // Re-represent Taus, recoil, and met in an orthnormal basis defined by the ditau plane.
+    TLorentzVector tp_prime = change_basis(tau1_p4, tau1_p4, tau2_p4);
+    TLorentzVector tm_prime = change_basis(tau2_p4, tau1_p4, tau2_p4);
+    TLorentzVector met_prime = change_basis(proj_met, tau1_p4, tau2_p4);
+    TLorentzVector recoil_prime = change_basis(jet_recoil, tau1_p4, tau2_p4);
+    TLorentzVector bjet_prime = change_basis(b1_p4, tau1_p4, tau2_p4);
+    TLorentzVector jet_prime = change_basis(b2_p4, tau1_p4, tau2_p4);
 
-    Double_t unboosted_MT2 = asymm_mt2_lester_bisect::get_mT2(
-                             mVisA, unboost_pxA, unboost_pyA,
-                             mVisB, unboost_pxB, unboost_pyB,
-                             unboost_pxMiss, unboost_pyMiss, chiA,
-                             chiB, desiredPrecisionOnMt2);
-    hist_unboosted_MT2->Fill(unboosted_MT2 * deltaR_taus);
+    TLorentzVector unb_tp_prime = tp_prime + recoil_prime;
+    TLorentzVector unb_tm_prime = tm_prime + recoil_prime;
+    TLorentzVector unb_met_prime = met_prime + recoil_prime;
 
-    hist_denis->Fill((MT2 - unboosted_MT2) / ditau.M());
 
-    // Calculate and fill topology plots.
+    // Calculate MT2 in the ditau plane.
+    // double MT2_prime = mt2(unb_tp_prime, unb_tm_prime, unb_met_prime);
+    // Regular unboost.
+    // double MT2_prime = mt2(tau1_p4 + dijet, tau2_p4 + dijet, met_p4 + dijet);
+    // Manual.
+    double MT2_prime = asymm_mt2_lester_bisect::get_mT2(tau1_p4.M(),
+                        unb_tp_prime.Px(), unb_tp_prime.Py(), tau2_p4.M(),
+                        unb_tm_prime.Px(), unb_met_prime.Px(),
+                        unb_met_prime.Py(), 0., 0., 0.);
+    hist_unboosted_MT2->Fill(MT2_prime);
+    hist_primed_htlt->Fill(bjet_prime.Pt() + jet_prime.Pt() - tp_prime.Pt()
+                           - tm_prime.Pt());
+
+    //////////// End MT2 calculations.
+
 
     // Calculate max{dPhi(MET, mu)} - dPhi(mu,mu)
     // positive --> Topo 1
     // negative --> Topo 2 (trivial zero)
-    Double_t max_dphi = std::max(abs(tau_plus.DeltaPhi(met_P4)),
-                                 abs(tau_minus.DeltaPhi(met_P4)));
-    Double_t dphi_taus = abs(tau_plus.DeltaPhi(tau_minus));
-    hist2d_topology->Fill(MT2, max_dphi - dphi_taus);
+    Double_t max_dphi = std::max(abs(unb_tp_prime.DeltaPhi(unb_met_prime)),
+                                 abs(unb_tm_prime.DeltaPhi(unb_met_prime)));
+    Double_t dphi_taus = abs(unb_tp_prime.DeltaPhi(unb_tm_prime));
+    hist2d_topology->Fill(MT2_prime, max_dphi - dphi_taus);
     hist_topology->Fill(max_dphi - dphi_taus);
-
-    // Calculate unboosted topology.
-    Double_t unboost_max_dphi = std::max(abs(unboosted_tau_plus.DeltaPhi(unboosted_met)),
-                                         abs(unboosted_tau_minus.DeltaPhi(unboosted_met)));
-    Double_t unboost_dphi_taus = abs(unboosted_tau_plus.DeltaPhi(unboosted_tau_minus));
-    Double_t tau_met_phi = abs(ditau.DeltaPhi(met_P4));
-    hist_j_topology->Fill(tau_met_phi - dphi_taus);
-
-    //////////// End MT2 calculations.
-
-    // Calculate and fill HT - LT.
-    Double_t H_T = abs(btag_jet.Pt()) + abs(second_jet.Pt());
-    Double_t L_T = abs(tau_plus.Pt()) + abs(tau_minus.Pt());
-    hist_HT_LT->Fill(H_T - L_T);
 
     // Fill ditau pair mass.
     hist_ditau_mass->Fill(ditau.M());
 
     // Fill Pt spectrums.
-    hist_pt_btag->Fill(btag_jet.Pt());
-    hist_pt_jet->Fill(second_jet.Pt());
-    hist_pt_tau_p->Fill(tau_plus.Pt());
-    hist_pt_tau_m->Fill(tau_minus.Pt());
+    hist_pt_btag->Fill(b1_p4.Pt());
+    hist_pt_jet->Fill(b2_p4.Pt());
+    hist_pt_tau_p->Fill(tau1_p4.Pt());
+    hist_pt_tau_m->Fill(tau2_p4.Pt());
 
     // Fill Ditau pt.
     hist_pt_ditau->Fill(ditau.Pt());
 
     // Fill energies.
-    hist_e_btag->Fill(btag_jet.E());
-    hist_e_jet->Fill(second_jet.E());
-    hist_e_tau_p->Fill(tau_plus.E());
-    hist_e_tau_m->Fill(tau_minus.E());
+    hist_e_btag->Fill(b1_p4.E());
+    hist_e_jet->Fill(b2_p4.E());
+    hist_e_tau_p->Fill(tau1_p4.E());
+    hist_e_tau_m->Fill(tau2_p4.E());
 
     // Fill E ratio.
-    hist_e_ratio->Fill(tau_plus.E() / (tau_plus.E() + tau_minus.E()));
+    hist_e_ratio->Fill(tau1_p4.E() / (tau1_p4.E() + tau2_p4.E()));
+
+    // Fill angular quantities.
+    Double_t deltaR_jets = b1_p4.DeltaR(b2_p4);
+    Double_t deltaR_taus = tau1_p4.DeltaR(tau2_p4);
+    Double_t deltaR_tau_jet = b_tau_pair.first.DeltaR(b_tau_pair.second);
+    Double_t deltaR_tau_met = ditau.DeltaR(met_p4);
+    Double_t deltaR_tau_met_max = std::max(tau1_p4.DeltaR(met_p4), tau2_p4.DeltaR(met_p4));
+    Double_t deltaR_topology = deltaR_tau_met_max - deltaR_taus;
+    hist_deltaR_jets->Fill(deltaR_jets);
+    hist_deltaR_tau_jet->Fill(deltaR_tau_jet);
+    hist_deltaR_tau_met->Fill(deltaR_tau_met);
+    hist_deltaR_topology->Fill(deltaR_topology);
+    hist_deltaR_taus->Fill(tau1_p4.DeltaR(tau2_p4));
+
+    if (tau1_p4.Pt() > tau2_p4.Pt()) {
+      hist_deltaPhi_tau_met->Fill(fabs(tau1_p4.DeltaPhi(met_p4)));
+    } else {
+      hist_deltaPhi_tau_met->Fill(fabs(tau2_p4.DeltaPhi(met_p4)));
+    }
 
     // Fill 2D histograms.
-    hist2d_e_tau->Fill(tau_plus.E(), tau_minus.E());
-    hist2d_e_pt_tau->Fill(tau_plus.E(), tau_plus.Pt());
-    hist2d_pt_tau->Fill(tau_plus.Pt(), tau_minus.Pt());
-    hist2d_e_pt_btag->Fill(MT2, tau_plus.Pt());
+    hist2d_e_tau->Fill(tau1_p4.E(), tau2_p4.E());
+    hist2d_e_pt_tau->Fill(tau1_p4.E(), tau1_p4.Pt());
+    hist2d_pt_tau->Fill(tau1_p4.Pt(), tau2_p4.Pt());
+    hist2d_e_pt_btag->Fill(MT2, tau1_p4.Pt());
     hist2d_pt_btag_tau->Fill(b_tau_pair.first.Pt(), b_tau_pair.second.Pt());
     hist2d_eta_btag_tau->Fill(b_tau_pair.first.Eta(), b_tau_pair.second.Eta());
 
   } // End event loop.
 
-  printf("Out of 40k events %d were accepted. \n", accepted_events);
+  printf("%d / %lld accepted \n", accepted_events, number_of_entries);
 
   // Draw histograms and save them in a .root format.
   hist_pair_mass->Scale(1/hist_pair_mass->Integral());
@@ -332,7 +395,7 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   hist_ditau_mass->Scale(1/hist_ditau_mass->Integral());
   hist_MT2->Scale(1/hist_MT2->Integral());
   hist_unboosted_MT2->Scale(1/hist_unboosted_MT2->Integral());
-  hist_denis->Scale(1/hist_denis->Integral());
+  hist_primed_htlt->Scale(1/hist_primed_htlt->Integral());
   hist_topology->Scale(1/hist_topology->Integral());
   hist_j_topology->Scale(1/hist_j_topology->Integral());
   hist_deltaR_jets->Scale(1/hist_deltaR_jets->Integral());
@@ -340,6 +403,7 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   hist_deltaR_tau_jet->Scale(1/hist_deltaR_tau_jet->Integral());
   hist_deltaR_tau_met->Scale(1/hist_deltaR_tau_met->Integral());
   hist_deltaR_topology->Scale(1/hist_deltaR_topology->Integral());
+  hist_deltaPhi_tau_met->Scale(1/hist_deltaPhi_tau_met->Integral());
   hist_pt_btag->Scale(1/hist_pt_btag->Integral());
   hist_pt_jet->Scale(1/hist_pt_jet->Integral());
   hist_pt_tau_p->Scale(1/hist_pt_tau_p->Integral());
@@ -428,8 +492,8 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
   TFile *f18 = new TFile("hist_topology.root", "UPDATE");
   hist_topology->Write(sample_desc, TObject::kOverwrite);
 
-  TFile *f19 = new TFile("hist_denis_ditau.root", "UPDATE");
-  hist_denis->Write(sample_desc, TObject::kOverwrite);
+  TFile *f19 = new TFile("hist_primed_htlt_ditau.root", "UPDATE");
+  hist_primed_htlt->Write(sample_desc, TObject::kOverwrite);
 
   TFile *f20 = new TFile("hist_deltaR_jets.root", "UPDATE");
   hist_deltaR_jets->Write(sample_desc, TObject::kOverwrite);
@@ -448,4 +512,7 @@ void DiTauAnalyzer(const char *file_name, const char *sample_desc, int nbins,
 
   TFile *f25 = new TFile("hist_j_topology.root", "UPDATE");
   hist_j_topology->Write(sample_desc, TObject::kOverwrite);
+
+  TFile *f26 = new TFile("hist_deltaPhi_tau_met.root", "UPDATE");
+  hist_deltaPhi_tau_met->Write(sample_desc, TObject::kOverwrite);
 }
